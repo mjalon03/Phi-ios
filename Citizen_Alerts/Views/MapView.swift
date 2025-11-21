@@ -141,6 +141,7 @@ struct MapView: View {
                             },
                             onDismiss: { showingProfileMenu = false }
                         )
+                        .environmentObject(AuthManager.shared)
                         .padding(.top, 70)
                         .padding(.trailing, 20)
                     }
@@ -1088,6 +1089,7 @@ struct AlertCard: View {
 struct ProfileMenuView: View {
     let onSettings: () -> Void
     let onDismiss: () -> Void
+    @EnvironmentObject private var authManager: AuthManager
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1151,6 +1153,18 @@ struct ProfileMenuView: View {
                     color: .green
                 ) {
                     // Help action - can be implemented later
+                    onDismiss()
+                }
+                
+                Divider()
+                    .padding(.horizontal, 16)
+                
+                ProfileMenuItem(
+                    icon: "rectangle.portrait.and.arrow.right",
+                    title: "Log Out",
+                    color: .red
+                ) {
+                    authManager.logout()
                     onDismiss()
                 }
             }

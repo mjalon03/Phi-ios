@@ -8,8 +8,16 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var authManager = AuthManager.shared
+    
     var body: some View {
-        MapView()
+        Group {
+            if authManager.isAuthenticated {
+                MapView()
+            } else {
+                LoginView()
+            }
+        }
     }
 }
 
