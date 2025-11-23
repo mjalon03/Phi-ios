@@ -28,11 +28,15 @@ struct BotChatResponse: Decodable {
     let reply: String?
     let imageAnalysis: BotImageAnalysis?
     let intent: String?
+    let showReportButton: Bool?
+    let reportButtonLabel: String?
 
     enum CodingKeys: String, CodingKey {
         case reply
         case imageAnalysis = "image_analysis"
         case intent
+        case showReportButton = "show_report_button"
+        case reportButtonLabel = "report_button_label"
     }
 }
 
@@ -91,10 +95,12 @@ class ChatService: ObservableObject {
     /// 백엔드 세션 유지용
     private let sessionId: String
 
-    /// 챗봇 백엔드 베이스 URL
-    ///
-    /// AuthAPI와 동일 서버 사용 (phi-backend-main)
+    /// 챗봇 백엔드 베이스 URL (phi-backend)
     private let backendBaseURL: String = APIConfig.baseURL
+
+    private var accessToken: String? {
+            AuthManager.shared.token
+    }
 
     private init() {
         self.sessionId = UUID().uuidString
@@ -145,7 +151,7 @@ class ChatService: ObservableObject {
         }
 
         do {
-            var request = try makeMultipartRequest(
+            let request = try makeMultipartRequest(
                 url: url,
                 text: userMessage.isEmpty ? "Please analyze this image." : userMessage,
                 images: images
@@ -171,20 +177,11 @@ class ChatService: ObservableObject {
                 ? "I couldn't generate a proper response."
                 : replyText
 
-            let quickReplies: [String]?
-            if let intent = botResponse.intent {
-                switch intent {
-                case "incident_report":
-                    quickReplies = ["Yes, report this", "No, not correct", "Change details"]
-                case "incident_query":
-                    quickReplies = ["Show more incidents", "Filter by time", "Filter by area"]
-                case "app_help":
-                    quickReplies = ["How to report", "How alerts work"]
-                default:
-                    quickReplies = nil
-                }
-            } else {
-                quickReplies = nil
+            // 🔹 report 버튼 노출 여부는 show_report_button 에만 의존
+            var quickReplies: [String]? = nil
+            if let show = botResponse.showReportButton, show {
+                let label = botResponse.reportButtonLabel ?? "Report this"
+                quickReplies = [label]
             }
 
             let botMessage = ChatMessage(
@@ -196,6 +193,24 @@ class ChatService: ObservableObject {
             await MainActor.run {
                 self.messages.append(botMessage)
             }
+
+            // 필요하면 imageAnalysis를 별도 시스템 메시지로 붙이고 싶을 때 여기서 처리
+            // (현재는 Python 쪽에서 reply 안에 이미 설명을 넣고 있음)
+            /*
+            if let analysis = botResponse.imageAnalysis {
+                let analysisText = """
+                [IMAGE_ANALYSIS] type=\(analysis.incidentType), severity=\(analysis.severity)
+                \(analysis.incidentDescription)
+                """
+                let analysisMsg = ChatMessage(
+                    content: analysisText,
+                    isUser: false
+                )
+                await MainActor.run {
+                    self.messages.append(analysisMsg)
+                }
+            }
+            */
 
         } catch {
             appendSystemMessage("Failed to contact chatbot: \(error.localizedDescription)")
@@ -209,6 +224,14 @@ class ChatService: ObservableObject {
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        // 🔑 여기 추가: JWT 토큰이 있으면 Authorization 헤더로 붙이기
+        if let token = accessToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            print("🔑 [ChatService] Using access token: \(token.prefix(20))...")
+        } else {
+            print("⚠️ [ChatService] No access token. Authorization header will NOT be set.")
+        }
 
         var body = Data()
 
@@ -224,7 +247,7 @@ class ChatService: ObservableObject {
         // text
         appendField(name: "text", value: text)
 
-        // image: 첫 번째 이미지만 백엔드로 전달 (백엔드 설계에 맞게 조정 가능)
+        // image (첫 번째만 전송)
         if let firstImage = images.first,
            let jpegData = firstImage.jpegData(compressionQuality: 0.8) {
 
